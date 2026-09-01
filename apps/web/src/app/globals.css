@@ -1,0 +1,93 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --background: #fbf9f5;
+  --foreground: #211c15;
+
+  --card: #ffffff;
+  --card-foreground: #211c15;
+
+  --primary: #2f6475;
+  --primary-foreground: #ffffff;
+
+  --secondary: #f1e9da;
+  --secondary-foreground: #3a3226;
+
+  --accent: #dda13b;
+  --accent-foreground: #2b1d06;
+
+  --muted: #f1ece3;
+  --muted-foreground: #746a59;
+
+  --border: #e6dece;
+  --input: #e6dece;
+  --ring: #2f6475;
+
+  --destructive: #c0392b;
+  --destructive-foreground: #ffffff;
+
+  --radius: 0.75rem;
+}
+
+.dark {
+  --background: #14181a;
+  --foreground: #f2ecdd;
+
+  --card: #1b2023;
+  --card-foreground: #f2ecdd;
+
+  --primary: #6ba3b3;
+  --primary-foreground: #0c1618;
+
+  --secondary: #262b2c;
+  --secondary-foreground: #e8e1d2;
+
+  --accent: #e8b84b;
+  --accent-foreground: #241804;
+
+  --muted: #1f2426;
+  --muted-foreground: #9c9484;
+
+  --border: #2a3134;
+  --input: #2a3134;
+  --ring: #6ba3b3;
+
+  --destructive: #e5726a;
+  --destructive-foreground: #1c0705;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) - 0.25rem);
+  --radius-sm: calc(var(--radius) - 0.4rem);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--color-background);
+  color: var(--color-foreground);
+}
+
+* {
+  border-color: var(--color-border);
+}

@@ -1,0 +1,372 @@
+// SAHARA core ledger schema.
+// Design reference: SAHARA_Platform_Design.docx, sections 4-6.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------- Enums ----------
+// Mirrors packages/shared/src for the values that need to live in the database.
+// Kept as separate Prisma enums deliberately: the TS enums are the app-level
+// contract, these are the DB-level contract. Services map between the two.
+
+enum StaffRole {
+  SUPPORT_AGENT
+  KYC_OFFICER
+  FINANCE_MANAGER
+  LISTING_ADMIN
+  SUPER_ADMIN
+  AUDITOR
+}
+
+enum KycTier {
+  TIER_0_UNVERIFIED
+  TIER_1_VERIFIED
+  RESTRICTED
+}
+
+enum KycCaseStatus {
+  PENDING_AUTO_REVIEW
+  PENDING_OFFICER_REVIEW
+  APPROVED
+  REJECTED
+  MORE_INFO_REQUESTED
+}
+
+enum DepositMethod {
+  FIAT
+  CRYPTO
+}
+
+enum DepositAsset {
+  USDC
+  USD_STABLECOIN_OTHER
+  ETH
+  SOL
+  FIAT_LOCAL
+}
+
+enum TransactionStatus {
+  PENDING
+  AWAITING_SETTLEMENT
+  UNDER_REVIEW
+  SETTLED
+  FAILED
+  REJECTED
+}
+
+enum WithdrawalReviewStage {
+  AUTO_APPROVED
+  PENDING_MAKER
+  PENDING_CHECKER
+  APPROVED
+  REJECTED
+}
+
+enum LedgerDirection {
+  CREDIT
+  DEBIT
+}
+
+enum LedgerEntryType {
+  DEPOSIT
+  WITHDRAWAL
+  ASSET_BUY
+  ASSET_SELL
+  FEE
+  ADJUSTMENT
+}
+
+enum AssetListingStatus {
+  DRAFT
+  PENDING_APPROVAL
+  LIVE
+  DELISTED
+}
+
+enum OrderSide {
+  BUY
+  SELL
+}
+
+enum OrderStatus {
+  PENDING
+  SETTLED
+  FAILED
+  REJECTED
+}
+
+enum SupportTicketPriority {
+  LOW
+  NORMAL
+  HIGH
+}
+
+enum SupportTicketStatus {
+  OPEN
+  ESCALATED_FINANCE
+  ESCALATED_KYC
+  RESOLVED
+  CLOSED
+}
+
+enum ActorType {
+  USER
+  STAFF
+  SYSTEM
+}
+
+// ---------- Retail user side ----------
+
+model User {
+  id           String    @id @default(uuid())
+  email        String?   @unique
+  phone        String?   @unique
+  passwordHash String
+  fullName     String?
+  dateOfBirth  DateTime?
+  country      String?
+  kycTier      KycTier   @default(TIER_0_UNVERIFIED)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  wallet         Wallet?
+  kycCases       KycCase[]
+  deposits       Deposit[]
+  withdrawals    Withdrawal[]
+  orders         Order[]
+  supportTickets SupportTicket[]
+
+  @@map("users")
+}
+
+model Wallet {
+  id                String   @id @default(uuid())
+  userId            String   @unique
+  user              User     @relation(fields: [userId], references: [id])
+  // Internal mirrored balance -- audit trail via LedgerEntry, source of truth for the mock
+  // deposit flow. Once Circle is wired up, on-chain USDC balance is queried live from Circle
+  // (CircleService.getWalletBalances) rather than trusted from this column alone.
+  usdcBalance       Decimal  @default(0) @db.Decimal(24, 6)
+  frozen            Boolean  @default(false)
+  frozenReason      String?
+  circleWalletSetId String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  ledgerEntries LedgerEntry[]
+  positions     AssetPosition[]
+  circleWallets CircleWallet[]
+
+  @@map("wallets")
+}
+
+// One row per chain per user -- e.g. one ETH-SEPOLIA wallet, one SOL-DEVNET wallet, both
+// under the same Circle wallet set (Wallet.circleWalletSetId). Chain choice: Ethereum + Solana,
+// product decision 2026-07-09. Add rows here, not new columns on Wallet, when a chain is added.
+model CircleWallet {
+  id             String   @id @default(uuid())
+  walletId       String
+  wallet         Wallet   @relation(fields: [walletId], references: [id])
+  chain          String
+  circleWalletId String   @unique
+  address        String
+  createdAt      DateTime @default(now())
+
+  @@map("circle_wallets")
+  @@unique([walletId, chain])
+}
+
+// ---------- Staff side ----------
+
+model StaffAccount {
+  id            String    @id @default(uuid())
+  email         String    @unique
+  passwordHash  String
+  role          StaffRole
+  mfaEnabled    Boolean   @default(false)
+  active        Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+  createdById   String?
+  deactivatedAt DateTime?
+
+  @@map("staff_accounts")
+}
+
+// ---------- KYC ----------
+
+model KycCase {
+  id              String        @id @default(uuid())
+  userId          String
+  user            User          @relation(fields: [userId], references: [id])
+  status          KycCaseStatus @default(PENDING_AUTO_REVIEW)
+  triggerReason   String
+  reviewerStaffId String?
+  decisionReason  String?
+  evidenceRef     String?
+  documentPaths   String[]      @default([])
+  createdAt       DateTime      @default(now())
+  decidedAt       DateTime?
+
+  @@map("kyc_cases")
+  @@index([userId])
+  @@index([status])
+}
+
+// ---------- Money movement ----------
+
+model Deposit {
+  id            String            @id @default(uuid())
+  userId        String
+  user          User              @relation(fields: [userId], references: [id])
+  method        DepositMethod
+  asset         DepositAsset
+  amountGross   Decimal           @db.Decimal(24, 6)
+  amountUsdc    Decimal           @db.Decimal(24, 6)
+  feeUsdc       Decimal           @default(0) @db.Decimal(24, 6)
+  status        TransactionStatus @default(PENDING)
+  providerRef   String?
+  sourceAddress String?
+  createdAt     DateTime          @default(now())
+  settledAt     DateTime?
+
+  @@map("deposits")
+  @@index([userId])
+  @@index([status])
+}
+
+model Withdrawal {
+  id              String                @id @default(uuid())
+  userId          String
+  user            User                  @relation(fields: [userId], references: [id])
+  amountUsdc      Decimal               @db.Decimal(24, 6)
+  destination     String
+  status          TransactionStatus     @default(PENDING)
+  reviewStage     WithdrawalReviewStage @default(PENDING_MAKER)
+  makerStaffId    String?
+  checkerStaffId  String?
+  rejectionReason String?
+  createdAt       DateTime              @default(now())
+  settledAt       DateTime?
+
+  @@map("withdrawals")
+  @@index([userId])
+  @@index([status])
+}
+
+model LedgerEntry {
+  id            String          @id @default(uuid())
+  walletId      String
+  wallet        Wallet          @relation(fields: [walletId], references: [id])
+  type          LedgerEntryType
+  direction     LedgerDirection
+  amountUsdc    Decimal         @db.Decimal(24, 6)
+  balanceAfter  Decimal         @db.Decimal(24, 6)
+  referenceType String
+  referenceId   String
+  createdAt     DateTime        @default(now())
+
+  @@map("ledger_entries")
+  @@index([walletId])
+  @@index([referenceType, referenceId])
+}
+
+// ---------- Assets and trading ----------
+
+model Asset {
+  id                String             @id @default(uuid())
+  symbol            String             @unique
+  name              String
+  issuer            String
+  chain             String
+  contractAddress   String?
+  minOrderUsdc      Decimal            @db.Decimal(24, 6)
+  feeBps            Int                @default(0)
+  // CoinGecko coin id (e.g. "ethereum", "solana") for live pricing. Null means this asset
+  // has no real market data source yet and falls back to the deterministic mock price.
+  coingeckoId       String?
+  status            AssetListingStatus @default(DRAFT)
+  createdByStaffId  String
+  approvedByStaffId String?
+  createdAt         DateTime           @default(now())
+  publishedAt       DateTime?
+
+  orders    Order[]
+  positions AssetPosition[]
+
+  @@map("assets")
+}
+
+model AssetPosition {
+  id       String  @id @default(uuid())
+  walletId String
+  wallet   Wallet  @relation(fields: [walletId], references: [id])
+  assetId  String
+  asset    Asset   @relation(fields: [assetId], references: [id])
+  quantity Decimal @default(0) @db.Decimal(24, 8)
+
+  @@map("asset_positions")
+  @@unique([walletId, assetId])
+}
+
+model Order {
+  id              String      @id @default(uuid())
+  userId          String
+  user            User        @relation(fields: [userId], references: [id])
+  assetId         String
+  asset           Asset       @relation(fields: [assetId], references: [id])
+  side            OrderSide
+  usdcAmount      Decimal     @db.Decimal(24, 6)
+  quantity        Decimal?    @db.Decimal(24, 8)
+  status          OrderStatus @default(PENDING)
+  rejectionReason String?
+  createdAt       DateTime    @default(now())
+  settledAt       DateTime?
+
+  @@map("orders")
+  @@index([userId])
+  @@index([assetId])
+}
+
+// ---------- Support ----------
+
+model SupportTicket {
+  id              String                @id @default(uuid())
+  userId          String
+  user            User                  @relation(fields: [userId], references: [id])
+  category        String
+  description     String
+  priority        SupportTicketPriority @default(NORMAL)
+  status          SupportTicketStatus   @default(OPEN)
+  assignedStaffId String?
+  transactionRef  String?
+  resolutionNote  String?
+  createdAt       DateTime              @default(now())
+  resolvedAt      DateTime?
+
+  @@map("support_tickets")
+  @@index([userId])
+  @@index([status])
+}
+
+// ---------- Audit ----------
+
+model AuditLogEntry {
+  id         String    @id @default(uuid())
+  actorType  ActorType
+  actorId    String?
+  action     String
+  targetType String
+  targetId   String
+  metadata   Json?
+  createdAt  DateTime  @default(now())
+
+  @@map("audit_log_entries")
+  @@index([targetType, targetId])
+  @@index([actorType, actorId])
+}
