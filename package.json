@@ -6,6 +6,9 @@
     "apps/*",
     "packages/*"
   ],
+  "devDependencies": {
+    "lightningcss": "1.32.0"
+  },
   "scripts": {
     "prepare": "npm run build --workspace=packages/shared",
     "build:shared": "npm run build --workspace=packages/shared",
